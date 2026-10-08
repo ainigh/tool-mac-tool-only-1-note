@@ -6,7 +6,7 @@
 #
 # The repository may be private, so everything comes through gh, signed in to GitHub (this sets
 # gh up if it's missing). It takes the latest release that GitHub built. If there isn't one (or
-# ONLYNOTE_FROM_SOURCE=1), it downloads the source of main (ONLYNOTE_BRANCH=name for another branch) and
+# ONLYNOTE_FROM_SOURCE=1), it downloads the source of main (ONLYNOTE_BRANCH=name for another branch) and 
 # builds it here with Apple's command line tools. The app then follows that branch for updates.
 set -euo pipefail
  
