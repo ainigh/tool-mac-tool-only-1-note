@@ -27,8 +27,9 @@ final class NoteTextView: NSTextView {
     var onEscape: (() -> Void)?
 
     /// The text edited since the last restyle (in the text as it is now).
-    private var pendingEdit: NSRange?
-    private var fenceCount = 0
+    fileprivate var pendingEdit: NSRange?
+    fileprivate var fenceCount = 0
+    private let relay = Relay()
 
     private static let linkDetector = try? NSDataDetector(types: NSTextCheckingResult.CheckingType.link.rawValue)
 
@@ -71,8 +72,9 @@ final class NoteTextView: NSTextView {
         tv.smartInsertDeleteEnabled = false
         tv.allowsCharacterPickerTouchBarItem = true
         tv.textContainerInset = NSSize(width: 28, height: 10)
-        storage.delegate = tv
-        tv.delegate = tv
+        tv.relay.view = tv
+        storage.delegate = tv.relay
+        tv.delegate = tv.relay
         scroll.documentView = tv
         return (scroll, tv)
     }
@@ -162,7 +164,7 @@ final class NoteTextView: NSTextView {
     }
 
     /// Restyles the lines `range` touches (as a whole), with the lines just before and after it.
-    private func restyle(_ range: NSRange) {
+    fileprivate func restyle(_ range: NSRange) {
         guard let storage = textStorage else { return }
         let s = storage.string as NSString
         var r = s.paragraphRange(for: NSRange(location: min(range.location, s.length), length: min(range.length, s.length - min(range.location, s.length))))
@@ -617,10 +619,28 @@ final class NoteTextView: NSTextView {
 
 // MARK: - Keeping track of edits
 
-extension NoteTextView: NSTextStorageDelegate, NSTextViewDelegate {
-    func textStorage(_ textStorage: NSTextStorage, didProcessEditing editedMask: NSTextStorageEditActions,
-                     range editedRange: NSRange, changeInLength delta: Int) {
-        guard editedMask.contains(.editedCharacters) else { return }
+extension NoteTextView {
+    /// The text storage's and text view's delegate: a separate object, so none of its methods can
+    /// meet one of NSTextView's own.
+    final class Relay: NSObject, NSTextStorageDelegate, NSTextViewDelegate {
+        weak var view: NoteTextView?
+
+        func textStorage(_ textStorage: NSTextStorage, didProcessEditing editedMask: NSTextStorageEditActions,
+                         range editedRange: NSRange, changeInLength delta: Int) {
+            guard editedMask.contains(.editedCharacters) else { return }
+            view?.noteEdit(editedRange, delta: delta)
+        }
+
+        func textDidChange(_ notification: Notification) { view?.afterChange() }
+
+        func textViewDidChangeSelection(_ notification: Notification) { view?.afterSelectionChange() }
+
+        func textView(_ textView: NSTextView, doCommandBy commandSelector: Selector) -> Bool {
+            view?.handle(commandSelector) ?? false
+        }
+    }
+
+    fileprivate func noteEdit(_ editedRange: NSRange, delta: Int) {
         pendingEdit = pendingEdit.map { old in
             // The earlier edit, moved by this one when it's after it.
             let moved = old.location >= editedRange.location ? NSRange(location: max(0, old.location + delta), length: old.length) : old
@@ -628,7 +648,7 @@ extension NoteTextView: NSTextStorageDelegate, NSTextViewDelegate {
         } ?? editedRange
     }
 
-    func textDidChange(_ notification: Notification) {
+    fileprivate func afterChange() {
         guard !hasMarkedText(), let storage = textStorage else {
             onChange?(string)
             return
@@ -646,20 +666,16 @@ extension NoteTextView: NSTextStorageDelegate, NSTextViewDelegate {
         onChange?(string)
     }
 
-    func textViewDidChangeSelection(_ notification: Notification) {
+    fileprivate func afterSelectionChange() {
         var attributes = baseAttributes()
         let at = selectedRange().location
-        if let storage = textStorage, at > 0, at <= storage.length {
+        if let storage = textStorage, at > 0, at <= storage.length,
+           storage.attribute(.noteDecoration, at: at - 1, effectiveRange: nil) == nil,
+           let font = storage.attribute(.font, at: at - 1, effectiveRange: nil) as? NSFont {
             // Type on in the look of the text before the caret, but never invisible or a link.
-            if let font = storage.attribute(.font, at: at - 1, effectiveRange: nil) as? NSFont, storage.attribute(.noteDecoration, at: at - 1, effectiveRange: nil) == nil {
-                attributes[.font] = font
-            }
+            attributes[.font] = font
         }
         typingAttributes = attributes
         onSelectionChange?(selectedRange())
-    }
-
-    func textView(_ textView: NSTextView, doCommandBy commandSelector: Selector) -> Bool {
-        handle(commandSelector)
     }
 }
